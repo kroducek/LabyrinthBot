@@ -80,6 +80,7 @@ class LabyrinthLobby(discord.ui.View):
             return
             
         from .board import generate_text_board
+        from .game import RoomView
         
         rows, cols = map(int, self.map_size_str.split('x'))
         board_text = generate_text_board(rows, cols)
@@ -90,6 +91,10 @@ class LabyrinthLobby(discord.ui.View):
             color=0x2B2D31
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
+        
+        # Vytvoření první testovací místnosti (A1) do chatu
+        room_view = RoomView(self.players, "A1")
+        await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
 
     @discord.ui.button(label="Pravidla", style=discord.ButtonStyle.secondary, custom_id="lab2_rules", row=1)
     async def rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
