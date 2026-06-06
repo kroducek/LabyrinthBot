@@ -82,17 +82,24 @@ class LabyrinthLobby(discord.ui.View):
             
         from .board import generate_text_board
         from .game import RoomView
-        
+        from .player_state import init_game
+
         rows, cols = map(int, self.map_size_str.split('x'))
         board_text = generate_text_board(rows, cols)
-        
+
+        # Unikátní ID hry = channel ID
+        game_id = str(interaction.channel_id)
+
+        # Inicializace hráčů + náhodný výběr vraha
+        init_game(game_id, self.players)
+
         embed = discord.Embed(
             title="🗺️ Labyrint vytvořen",
             description=f"*Hra začala! Místnosti (celkem {rows*cols}) byly rozloženy v mřížce {self.map_size_str}.*\n\n```text\n{board_text}\n```",
             color=0x2B2D31
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
-        
+
         # Výběr rohového startu
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         corners = [
@@ -102,11 +109,24 @@ class LabyrinthLobby(discord.ui.View):
             f"{alphabet[cols-1]}{rows}"
         ]
         start_coord = random.choice(corners)
-        
-        # Vytvoření první místnosti do chatu
-        room_view = RoomView(self.players, room_name=start_coord, map_rows=rows, map_cols=cols)
+
+        # Vytvoření první místnosti + herního menu
+        room_view = RoomView(
+            self.players, room_name=start_coord,
+            map_rows=rows, map_cols=cols, game_id=game_id
+        )
+        menu_view = room_view._build_menu()
+
         msg = await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
         room_view.message = msg
+        await interaction.channel.send(view=menu_view)
+
+        # Zkontroluj podmínky pro vrahovo tlačítko Zabít (případ 2 hráčů od startu)
+        from .basic_menu import check_and_send_kill_prompt
+        await check_and_send_kill_prompt(
+            interaction.channel, game_id,
+            self.players, start_coord, room_view
+        )
 
     @discord.ui.button(label="Pravidla", style=discord.ButtonStyle.secondary, custom_id="lab2_rules", row=1)
     async def rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):

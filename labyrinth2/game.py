@@ -1,6 +1,9 @@
 import discord
 import random
 
+from .player_state import init_game
+from .basic_menu import BasicMenuView, check_and_send_kill_prompt
+
 # channel_id -> RoomView
 active_rooms = {}
 
@@ -23,19 +26,21 @@ def random_non_corner_room(rows: int, cols: int) -> str:
         if candidate not in corners:
             return candidate
 
+
 class RoomView(discord.ui.View):
     def __init__(self, players: list[discord.Member], room_name: str = "A1", room_id: str = None,
-                 map_rows: int = 4, map_cols: int = 4):
+                 map_rows: int = 4, map_cols: int = 4, game_id: str = None):
         super().__init__(timeout=None)
         self.players = players
         self.room_name = room_name
         self.room_id = room_id or room_name
         self.map_rows = map_rows
         self.map_cols = map_cols
-        self.choices = {}  # user_id -> door_index
-        self.doors = []    # list of capacities
+        self.game_id = game_id or room_name
+        self.choices = {}   # user_id -> door_index
+        self.doors = []     # list of capacities
         self.message: discord.Message = None
-        
+
     def _create_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title=f"🚪 Místnost [{self.room_name}]",
@@ -50,29 +55,34 @@ class RoomView(discord.ui.View):
         )
         return embed
 
+    def _build_menu(self) -> BasicMenuView:
+        """Vytvoří BasicMenuView pro tuto místnost."""
+        return BasicMenuView(
+            game_id=self.game_id,
+            players=self.players,
+            room_name=self.room_name,
+        )
+
     @discord.ui.button(label="🎲 Vzít kostky na podstavci", style=discord.ButtonStyle.primary, custom_id="lab2_take_dice")
     async def take_dice_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user not in self.players:
             await interaction.response.send_message("*Nejsi v této místnosti.*", ephemeral=True)
             return
-            
-        # Odebrat tlačítko
+
         self.remove_item(button)
-        
+
         sides = max(1, len(self.players))
-        
-        # Odeslání oznámení do chatu
+
         embed = discord.Embed(
             title="🎲 Házení kostkami",
             description=f"**{interaction.user.display_name}** přistoupil k podstavci a vzal si kostky.\n\n"
                         f"👉 **Nyní použij příkaz `/roll {sides}`** pro hození 4 kostkami (se {sides} stěnami)!",
             color=0x2B2D31
         )
-        
+
         await interaction.response.edit_message(view=self)
         await interaction.channel.send(embed=embed)
-        
-        # Zaregistrovat tuto místnost jako čekající na hod
+
         active_rooms[interaction.channel_id] = self
 
     def apply_roll_and_show_doors(self, rolls: list[int]):
@@ -92,19 +102,18 @@ class RoomView(discord.ui.View):
             if interaction.user not in self.players:
                 await interaction.response.send_message("*Nejsi v této místnosti.*", ephemeral=True)
                 return
-                
+
             if interaction.user.id in self.choices:
                 await interaction.response.send_message("*Své rozhodnutí už jsi učinil!*", ephemeral=True)
                 return
-                
+
             if self.doors[door_index] <= 0:
                 await interaction.response.send_message("*Tato cesta je už plná! Musíš jinudy.*", ephemeral=True)
                 return
-                
+
             self.doors[door_index] -= 1
             self.choices[interaction.user.id] = door_index
-            
-            # Aktualizace kapacity na tlačítku
+
             for item in self.children:
                 if getattr(item, "custom_id", "") == f"lab2_door_{door_index}":
                     base_label = item.label.split('[')[0]
@@ -112,20 +121,31 @@ class RoomView(discord.ui.View):
                     if self.doors[door_index] == 0:
                         item.disabled = True
                     break
-                    
+
             if len(self.choices) == len(self.players):
                 # Všichni prošli, generujeme novou místnost (nikdy ne rohovou)
                 next_room = random_non_corner_room(self.map_rows, self.map_cols)
-                next_view = RoomView(self.players, next_room, map_rows=self.map_rows, map_cols=self.map_cols)
-                
+                next_view = RoomView(
+                    self.players, next_room,
+                    map_rows=self.map_rows, map_cols=self.map_cols,
+                    game_id=self.game_id,
+                )
+                menu_view = next_view._build_menu()
+
                 await interaction.response.edit_message(
-                    content=f"*Všichni prošli dveřmi a nechali místnost {self.room_name} za sebou...*", 
+                    content=f"*Všichni prošli dveřmi a nechali místnost {self.room_name} za sebou...*",
                     embed=None, view=None
                 )
+                # Pošleme novou místnost s embedem + herní menu pod ní
                 msg = await interaction.channel.send(embed=next_view._create_embed(), view=next_view)
                 next_view.message = msg
+                await interaction.channel.send(view=menu_view)
+                # Zkontroluj podmínky pro vrahovo tlačítko Zabít
+                await check_and_send_kill_prompt(
+                    interaction.channel, next_view.game_id,
+                    next_view.players, next_view.room_name, next_view
+                )
             else:
-                # Někdo ještě neprošel
                 await interaction.response.edit_message(view=self)
-                
+
         return callback
