@@ -104,7 +104,7 @@ class LabyrinthLobby(discord.ui.View):
         start_coord = random.choice(corners)
         
         # Vytvoření první místnosti do chatu
-        room_view = RoomView(self.players, coord_name=start_coord, room_id="labyrinth_hub")
+        room_view = RoomView(self.players, room_name=start_coord, map_rows=rows, map_cols=cols)
         msg = await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
         room_view.message = msg
 

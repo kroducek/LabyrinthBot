@@ -4,11 +4,34 @@ import random
 # channel_id -> RoomView
 active_rooms = {}
 
+ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+def get_corners(rows: int, cols: int) -> set:
+    """Vrátí množinu rohových souřadnic pro danou mapu."""
+    return {
+        "A1",
+        f"{ALPHABET[cols-1]}1",
+        f"A{rows}",
+        f"{ALPHABET[cols-1]}{rows}"
+    }
+
+def random_non_corner_room(rows: int, cols: int) -> str:
+    """Vygeneruje náhodnou místnost, která není rohová."""
+    corners = get_corners(rows, cols)
+    while True:
+        candidate = f"{random.choice(ALPHABET[:cols])}{random.randint(1, rows)}"
+        if candidate not in corners:
+            return candidate
+
 class RoomView(discord.ui.View):
-    def __init__(self, players: list[discord.Member], room_name: str = "A1"):
+    def __init__(self, players: list[discord.Member], room_name: str = "A1", room_id: str = None,
+                 map_rows: int = 4, map_cols: int = 4):
         super().__init__(timeout=None)
         self.players = players
         self.room_name = room_name
+        self.room_id = room_id or room_name
+        self.map_rows = map_rows
+        self.map_cols = map_cols
         self.choices = {}  # user_id -> door_index
         self.doors = []    # list of capacities
         self.message: discord.Message = None
@@ -91,9 +114,9 @@ class RoomView(discord.ui.View):
                     break
                     
             if len(self.choices) == len(self.players):
-                # Všichni prošli, generujeme novou místnost
-                next_room = f"{random.choice('ABCDEFGH')}{random.randint(1, 8)}"
-                next_view = RoomView(self.players, next_room)
+                # Všichni prošli, generujeme novou místnost (nikdy ne rohovou)
+                next_room = random_non_corner_room(self.map_rows, self.map_cols)
+                next_view = RoomView(self.players, next_room, map_rows=self.map_rows, map_cols=self.map_cols)
                 
                 await interaction.response.edit_message(
                     content=f"*Všichni prošli dveřmi a nechali místnost {self.room_name} za sebou...*", 
