@@ -38,7 +38,8 @@ class LabyrinthBot(commands.Bot):
         print("--- 🐾 Načítám Labyrinth ---")
         try:
             await self.load_extension('labyrinth2.lobby')
-            print("✅ labyrinth 2.0 (lobby) načten.")
+            await self.load_extension('labyrinth2.roll')
+            print("✅ labyrinth 2.0 (lobby & roll) načten.")
         except Exception as e:
             logging.exception("❌ labyrinth 2.0 selhal při načítání:")
 
