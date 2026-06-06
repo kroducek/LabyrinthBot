@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import random
 
 class LabyrinthLobby(discord.ui.View):
     def __init__(self, author: discord.Member):
@@ -92,9 +93,20 @@ class LabyrinthLobby(discord.ui.View):
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
         
-        # Vytvoření první testovací místnosti (A1) do chatu
-        room_view = RoomView(self.players, "A1")
-        await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
+        # Výběr rohového startu
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        corners = [
+            "A1",
+            f"{alphabet[cols-1]}1",
+            f"A{rows}",
+            f"{alphabet[cols-1]}{rows}"
+        ]
+        start_coord = random.choice(corners)
+        
+        # Vytvoření první místnosti do chatu
+        room_view = RoomView(self.players, coord_name=start_coord, room_id="labyrinth_hub")
+        msg = await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
+        room_view.message = msg
 
     @discord.ui.button(label="Pravidla", style=discord.ButtonStyle.secondary, custom_id="lab2_rules", row=1)
     async def rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
