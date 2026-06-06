@@ -215,18 +215,17 @@ class KillView(discord.ui.View):
             view=self,
         )
 
-        guild = self.murderer.guild
-        if guild:
-            channel = guild.get_channel(int(self.game_id))
-            if channel:
-                await channel.send(embed=discord.Embed(
-                    title="💀 Někdo byl nalezen mrtvý",
-                    description=(
-                        f"*{self.victim.mention} byl nalezen mrtvý "
-                        f"v místnosti **{self.room_name}**...*\n\nTma pohltila další duši."
-                    ),
-                    color=0x8B0000,
-                ))
+        # Pošli oznámení do vlákna skupiny (nebo fallback na parent kanál)
+        target = getattr(self.room_view, 'send_target', None)
+        if target:
+            await target.send(embed=discord.Embed(
+                title="💀 Někdo byl nalezen mrtvý",
+                description=(
+                    f"*{self.victim.mention} byl nalezen mrtvý "
+                    f"v místnosti **{self.room_name}**...*\n\nTma pohltila další duši."
+                ),
+                color=0x8B0000,
+            ))
 
     @discord.ui.button(label="Přehodnotit", style=discord.ButtonStyle.secondary,
                        custom_id="lab2_dm_cancel")

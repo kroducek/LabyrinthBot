@@ -1,40 +1,26 @@
 """
 game.py
-Herní logika místností s kompasovým systémem.
+Herní logika místností s kompasovým systémem a vláknovým pohybem.
 
-Souřadnicový systém:
-  - Sloupce = písmena A, B, C... (osa X, západ→východ)
-  - Řádky   = čísla 1, 2, 3...  (osa Y, sever→jih)
-  - Příklad 4x4: A1 B1 C1 D1
-                 A2 B2 C2 D2
-                 A3 B3 C3 D3
-                 A4 B4 C4 D4
-
-Dveře:
-  - Sever (N) = row - 1   (existuje jen pokud row > 1)
-  - Jih   (S) = row + 1   (existuje jen pokud row < rows)
-  - Západ (W) = col - 1   (existuje jen pokud col_idx > 0)
-  - Východ(E) = col + 1   (existuje jen pokud col_idx < cols-1)
-
-Počet kostek:
-  - Rohová místnost    → 2 stěny
-  - Okrajová místnost  → 3 stěny
-  - Vnitřní místnost   → 4 stěny
+Každá skupina hráčů ve stejné místnosti sdílí jedno Discord vlákno.
+P�i rozdělení u dveří vznikají nová vlákna pro každou podskupinu.
 """
 
 import discord
 import random
+from collections import Counter
 
 from .player_state import init_game
 from .basic_menu import BasicMenuView, check_and_send_kill_prompt
+from .thread_manager import create_thread, move_group_to_room, archive_thread
 
-# channel_id -> RoomView
-active_rooms = {}
+# channel_id -> RoomView  (pro /roll příkaz)
+active_rooms: dict[int, "RoomView"] = {}
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-DIRECTION_EMOJI = {"N": "⬆️", "S": "⬇️", "W": "⬅️", "E": "➡️"}
-DIRECTION_LABEL = {"N": "Sever", "S": "Jih", "W": "Západ", "E": "Východ"}
+DIRECTION_EMOJI  = {"N": "⬆️", "S": "⬇️", "W": "⬅️", "E": "➡️"}
+DIRECTION_LABEL  = {"N": "Sever", "S": "Jih", "W": "Západ", "E": "Východ"}
 DOOR_COLORS = {
     0: ("🔴", "Červené"),
     1: ("🔵", "Modré"),
@@ -46,7 +32,6 @@ DOOR_COLORS = {
 # ── Souřadnicové pomocné funkce ───────────────────────────────────────────────
 
 def parse_coord(room_name: str) -> tuple[str, int]:
-    """'B3' → ('B', 3)"""
     return room_name[0], int(room_name[1:])
 
 def format_coord(col: str, row: int) -> str:
@@ -56,7 +41,6 @@ def col_index(col: str) -> int:
     return ALPHABET.index(col)
 
 def get_available_directions(room_name: str, rows: int, cols: int) -> list[str]:
-    """Vrátí seřazený seznam směrů (N/S/W/E) které existují z dané místnosti."""
     col, row = parse_coord(room_name)
     cidx = col_index(col)
     dirs = []
@@ -64,10 +48,9 @@ def get_available_directions(room_name: str, rows: int, cols: int) -> list[str]:
     if row < rows:     dirs.append("S")
     if cidx > 0:       dirs.append("W")
     if cidx < cols-1:  dirs.append("E")
-    return dirs  # max 4, rohová 2, okrajová 3
+    return dirs
 
 def neighbor_in_direction(room_name: str, direction: str) -> str:
-    """Vrátí souřadnici sousední místnosti daným směrem."""
     col, row = parse_coord(room_name)
     cidx = col_index(col)
     if direction == "N": return format_coord(col, row - 1)
@@ -79,7 +62,6 @@ def opposite_direction(d: str) -> str:
     return {"N": "S", "S": "N", "W": "E", "E": "W"}[d]
 
 def dice_sides(room_name: str, rows: int, cols: int) -> int:
-    """Počet stran kostek = počet dostupných směrů."""
     return len(get_available_directions(room_name, rows, cols))
 
 
@@ -94,26 +76,33 @@ class RoomView(discord.ui.View):
         map_rows: int = 4,
         map_cols: int = 4,
         game_id: str = None,
-        came_from: str = None,   # směr odkud hráči přišli (pro zpětnou referenci)
+        came_from: str = None,
+        parent_channel: discord.TextChannel = None,
+        thread: discord.Thread = None,
     ):
         super().__init__(timeout=None)
-        self.players = players
+        self.players = list(players)          # kopie, ne reference
         self.room_name = room_name
         self.room_id = room_id or room_name
         self.map_rows = map_rows
         self.map_cols = map_cols
         self.game_id = game_id or room_name
-        self.came_from = came_from   # např. "S" = přišli ze severu (= dveře na jih vedou zpět)
-        self.choices = {}            # user_id -> direction
-        # directions[i] = (direction_str, capacity)
+        self.came_from = came_from
+        self.parent_channel = parent_channel  # původní lobby kanál
+        self.thread = thread                  # vlákno této skupiny
+        self.choices: dict[int, str] = {}     # user_id -> direction
         self.directions: list[tuple[str, int]] = []
         self.message: discord.Message = None
+
+    @property
+    def send_target(self) -> discord.abc.Messageable:
+        """Kam posílat zprávy — vlákno pokud existuje, jinak kanál."""
+        return self.thread or self.parent_channel
 
     def _create_embed(self) -> discord.Embed:
         dirs = get_available_directions(self.room_name, self.map_rows, self.map_cols)
         sides = len(dirs)
-        corner_note = " *(rohová — 2 průchody)*" if sides == 2 else (
-                      " *(okrajová — 3 průchody)*" if sides == 3 else "")
+        corner_note = " *(rohová)*" if sides == 2 else (" *(okrajová)*" if sides == 3 else "")
 
         embed = discord.Embed(
             title=f"🚪 Místnost [{self.room_name}]{corner_note}",
@@ -126,7 +115,6 @@ class RoomView(discord.ui.View):
             ),
             color=0x2B2D31,
         )
-        # Přehled dostupných směrů
         dir_lines = []
         for d in dirs:
             neighbor = neighbor_in_direction(self.room_name, d)
@@ -134,7 +122,23 @@ class RoomView(discord.ui.View):
         embed.add_field(name="🧭 Východy", value="\n".join(dir_lines), inline=False)
         return embed
 
-    def _build_menu(self) -> BasicMenuView:
+    def _waiting_embed(self) -> discord.Embed:
+        """Embed zobrazující kdo už si vybral dveře a kdo čeká."""
+        lines = []
+        for p in self.players:
+            if p.id in self.choices:
+                d = self.choices[p.id]
+                lines.append(f"✅ {p.display_name} → {DIRECTION_EMOJI[d]} {DIRECTION_LABEL[d]}")
+            else:
+                lines.append(f"⏳ {p.display_name} — čeká...")
+        embed = discord.Embed(
+            title=f"🚪 Místnost [{self.room_name}] — čekáme",
+            description="\n".join(lines),
+            color=0x2B2D31,
+        )
+        return embed
+
+    def _build_menu(self) -> "BasicMenuView":
         return BasicMenuView(
             game_id=self.game_id,
             players=self.players,
@@ -159,31 +163,26 @@ class RoomView(discord.ui.View):
             title="🎲 Házení kostkami",
             description=(
                 f"**{interaction.user.display_name}** přistoupil k podstavci a vzal si kostky.\n\n"
-                f"Tato místnost má **{sides} průchody** — kostky mají **{sides} stěn**.\n\n"
+                f"Tato místnost má **{sides} průchodů** — kostky mají **{sides} stěn**.\n\n"
                 f"👉 **Použij příkaz `/roll {sides}`** pro hození {n_players} kostkami!"
             ),
             color=0x2B2D31,
         )
 
         await interaction.response.edit_message(view=self)
-        await interaction.channel.send(embed=embed)
+        await self.send_target.send(embed=embed)
         active_rooms[interaction.channel_id] = self
 
     def apply_roll_and_show_doors(self, rolls: list[int]):
-        """
-        rolls = výsledky hodů (jeden hod za dveře).
-        Přiřadí kapacity ke směrům a zobrazí tlačítka s kompasem.
-        """
         available = get_available_directions(self.room_name, self.map_rows, self.map_cols)
-        # rolls může mít méně hodnot než směrů — zarovnáme
         caps = rolls[:len(available)]
         while len(caps) < len(available):
             caps.append(1)
 
-        self.directions = [(d, c) for d, c in zip(available, caps)]
+        self.directions = list(zip(available, caps))
 
         for i, (direction, cap) in enumerate(self.directions):
-            emoji, color_name = DOOR_COLORS[i]
+            emoji, _ = DOOR_COLORS[i]
             neighbor = neighbor_in_direction(self.room_name, direction)
             btn = discord.ui.Button(
                 label=f"{emoji} {DIRECTION_LABEL[direction]} → {neighbor} [{cap}]",
@@ -211,11 +210,11 @@ class RoomView(discord.ui.View):
                 )
                 return
 
-            # Sniž kapacitu
+            # Zaznamenej volbu, sniž kapacitu
             self.directions[door_index] = (direction, cap - 1)
             self.choices[interaction.user.id] = direction
 
-            # Aktualizuj label tlačítka
+            # Aktualizuj label
             new_cap = cap - 1
             neighbor = neighbor_in_direction(self.room_name, direction)
             emoji, _ = DOOR_COLORS[door_index]
@@ -226,40 +225,63 @@ class RoomView(discord.ui.View):
                         item.disabled = True
                     break
 
-            if len(self.choices) == len(self.players):
-                # Zjisti nejčastější zvolený směr (příp. prvního)
-                # Každý hráč si vybral směr — seskupíme podle směru
-                from collections import Counter
-                direction_counts = Counter(self.choices.values())
-                chosen_direction = direction_counts.most_common(1)[0][0]
-                next_room_name = neighbor_in_direction(self.room_name, chosen_direction)
+            # Všichni zvolili?
+            if len(self.choices) < len(self.players):
+                # Ukaž waiting embed
+                await interaction.response.edit_message(
+                    embed=self._waiting_embed(), view=self
+                )
+                return
+
+            # ── Všichni zvolili → rozdělení do skupin ────────────────────────
+            await interaction.response.edit_message(
+                content=f"*Skupina opouští místnost {self.room_name}...*",
+                embed=None, view=None,
+            )
+
+            # Seskup hráče podle zvoleného směru
+            groups: dict[str, list[discord.Member]] = {}
+            for player in self.players:
+                d = self.choices[player.id]
+                groups.setdefault(d, []).append(player)
+
+            original_players = list(self.players)
+
+            for chosen_dir, subgroup in groups.items():
+                next_room_name = neighbor_in_direction(self.room_name, chosen_dir)
+
+                # Přesuň skupinu do vlákna (přejmenuj nebo vytvoř nové)
+                new_thread = await move_group_to_room(
+                    parent_channel=self.parent_channel,
+                    game_id=self.game_id,
+                    old_players=original_players,
+                    subgroup=subgroup,
+                    from_room=self.room_name,
+                    to_room=next_room_name,
+                    direction_label=DIRECTION_LABEL[chosen_dir],
+                )
 
                 next_view = RoomView(
-                    self.players,
-                    next_room_name,
+                    players=subgroup,
+                    room_name=next_room_name,
                     map_rows=self.map_rows,
                     map_cols=self.map_cols,
                     game_id=self.game_id,
-                    came_from=opposite_direction(chosen_direction),
+                    came_from=opposite_direction(chosen_dir),
+                    parent_channel=self.parent_channel,
+                    thread=new_thread,
                 )
                 menu_view = next_view._build_menu()
 
-                await interaction.response.edit_message(
-                    content=f"*Všichni prošli {DIRECTION_EMOJI[chosen_direction]} "
-                            f"{DIRECTION_LABEL[chosen_direction]}em do místnosti {next_room_name}...*",
-                    embed=None,
-                    view=None,
-                )
-                msg = await interaction.channel.send(
+                msg = await new_thread.send(
                     embed=next_view._create_embed(), view=next_view
                 )
                 next_view.message = msg
-                await interaction.channel.send(view=menu_view)
+                await new_thread.send(view=menu_view)
+
                 await check_and_send_kill_prompt(
-                    interaction.channel, next_view.game_id,
+                    new_thread, next_view.game_id,
                     next_view.players, next_view.room_name, next_view,
                 )
-            else:
-                await interaction.response.edit_message(view=self)
 
         return callback

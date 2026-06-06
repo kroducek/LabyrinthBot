@@ -110,21 +110,32 @@ class LabyrinthLobby(discord.ui.View):
         ]
         start_coord = random.choice(corners)
 
-        # Vytvoření první místnosti + herního menu
+        # Vytvoření prvního vlákna pro všechny hráče
+        from .thread_manager import create_thread
+        from .basic_menu import check_and_send_kill_prompt
+
+        start_thread = await create_thread(
+            channel=interaction.channel,
+            game_id=game_id,
+            players=self.players,
+            room_name=start_coord,
+        )
+
         room_view = RoomView(
             self.players, room_name=start_coord,
-            map_rows=rows, map_cols=cols, game_id=game_id
+            map_rows=rows, map_cols=cols, game_id=game_id,
+            parent_channel=interaction.channel,
+            thread=start_thread,
         )
         menu_view = room_view._build_menu()
 
-        msg = await interaction.channel.send(embed=room_view._create_embed(), view=room_view)
+        msg = await start_thread.send(embed=room_view._create_embed(), view=room_view)
         room_view.message = msg
-        await interaction.channel.send(view=menu_view)
+        await start_thread.send(view=menu_view)
 
         # Zkontroluj podmínky pro vrahovo tlačítko Zabít (případ 2 hráčů od startu)
-        from .basic_menu import check_and_send_kill_prompt
         await check_and_send_kill_prompt(
-            interaction.channel, game_id,
+            start_thread, game_id,
             self.players, start_coord, room_view
         )
 
