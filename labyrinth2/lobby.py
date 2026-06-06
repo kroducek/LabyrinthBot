@@ -8,6 +8,8 @@ class LabyrinthLobby(discord.ui.View):
         self.author = author
         self.players: list[discord.Member] = [author]
         self.max_players = 12
+        self.map_size_str = "4x4"
+        self.add_item(MapSizeSelect())
         self.update_start_button()
 
     def _embed(self) -> discord.Embed:
@@ -15,6 +17,7 @@ class LabyrinthLobby(discord.ui.View):
         description = (
             "*Vstupujete do temnoty, odkud není snadného návratu...*\n"
             "*Připravte se na zkoušku důvěry a přežití.*\n\n"
+            f"🗺️ **Velikost mapy:** {self.map_size_str}\n\n"
             "**Seznam hráčů:**\n"
         )
         if not self.players:
@@ -72,12 +75,21 @@ class LabyrinthLobby(discord.ui.View):
             await interaction.response.send_message("*Hru může spustit pouze zakladatel.*", ephemeral=True)
             return
         
-        if len(self.players) < 2:
-            await interaction.response.send_message("*Na spuštění hry je potřeba více hráčů (min. 2).*!", ephemeral=True)
+        if len(self.players) < 1:
+            await interaction.response.send_message("*Na spuštění hry je potřeba alespoň 1 hráč.*", ephemeral=True)
             return
             
-        # Zde bude inicializace hry do budoucna
-        await interaction.response.edit_message(content="*Hra brzy začne... připravte se na temnotu.*", embed=None, view=None)
+        from .board import generate_text_board
+        
+        rows, cols = map(int, self.map_size_str.split('x'))
+        board_text = generate_text_board(rows, cols)
+        
+        embed = discord.Embed(
+            title="🗺️ Labyrint vytvořen",
+            description=f"*Hra začala! Místnosti (celkem {rows*cols}) byly rozloženy v mřížce {self.map_size_str}.*\n\n```text\n{board_text}\n```",
+            color=0x2B2D31
+        )
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
 
     @discord.ui.button(label="Pravidla", style=discord.ButtonStyle.secondary, custom_id="lab2_rules", row=1)
     async def rules_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -114,6 +126,29 @@ class LabyrinthLobby(discord.ui.View):
             color=0x483D8B
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class MapSizeSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="3x3 (Mládě)", description="Rychlá hra - 9 místností", value="3x3"),
+            discord.SelectOption(label="4x4 (Klasika)", description="Běžná hra - 16 místností", value="4x4", default=True),
+            discord.SelectOption(label="6x6 (Rozlehlé)", description="Dlouhá hra - 36 místností", value="6x6"),
+            discord.SelectOption(label="8x8 (Labyrint)", description="Peklo - 64 místností", value="8x8"),
+        ]
+        super().__init__(placeholder="Vyber velikost mapy", options=options, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: 'LabyrinthLobby' = self.view
+        if interaction.user != view.author:
+            await interaction.response.send_message("*Tohle nastavení může měnit jen zakladatel.*", ephemeral=True)
+            return
+            
+        view.map_size_str = self.values[0]
+        for opt in self.options:
+            opt.default = (opt.value == view.map_size_str)
+            
+        await interaction.response.edit_message(embed=view._embed(), view=view)
 
 
 class LobbyCog(commands.Cog):
