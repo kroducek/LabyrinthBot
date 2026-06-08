@@ -119,11 +119,12 @@ async def check_and_send_kill_prompt(
 
 class BasicMenuView(discord.ui.View):
     def __init__(self, game_id: str, players: list[discord.Member],
-                 room_name: str, map_rows: int = 4, map_cols: int = 4):
+                 room_name: str, map_rows: int = 4, map_cols: int = 4, room_id: str = None):
         super().__init__(timeout=None)
         self.game_id = game_id
         self.players = players
         self.room_name = room_name
+        self.room_id = room_id or room_name
         self.map_rows = map_rows
         self.map_cols = map_cols
 
@@ -157,7 +158,7 @@ class BasicMenuView(discord.ui.View):
         if interaction.user not in self.players:
             await interaction.response.send_message("*Nejsi v této místnosti.*", ephemeral=True)
             return
-        view = SearchView(self.game_id, interaction.user, self.room_name)
+        view = SearchView(self.game_id, interaction.user, self.room_name, room_id=self.room_id)
         embed = discord.Embed(
             title=f"🔍 Průzkum — {self.room_name}",
             description="*Rozhlédneš se po místnosti a začneš prohledávat každý kout...*",

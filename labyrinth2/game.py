@@ -147,6 +147,7 @@ class RoomView(discord.ui.View):
             room_name=self.room_name,
             map_rows=self.map_rows,
             map_cols=self.map_cols,
+            room_id=self.room_id,
         )
 
     @discord.ui.button(label="🎲 Vzít kostky na podstavci", style=discord.ButtonStyle.primary,
@@ -333,14 +334,15 @@ class DiceView(discord.ui.View):
 
         # Aplikuj hod na dveře
         self.room_view.apply_roll_and_show_doors(rolls)
-        if self.room_view.message:
-            room_embed = self.room_view._create_embed()
-            room_embed.add_field(
-                name="Dveře se otevřely",
-                value="Cesta dál je volná. Jakým směrem se vydáte?",
-                inline=False,
-            )
-            await self.room_view.message.edit(embed=room_embed, view=self.room_view)
+        room_embed = self.room_view._create_embed()
+        room_embed.add_field(
+            name="Dveře se otevřely",
+            value="Cesta dál je volná. Jakým směrem se vydáte?",
+            inline=False,
+        )
+        # Pošli novou zprávu s embédem přímo do vlákna — hráč nemusí scrollovat
+        new_msg = await self.room_view.send_target.send(embed=room_embed, view=self.room_view)
+        self.room_view.message = new_msg  # aktualizuj referenci pro budoucí edity
 
     @discord.ui.button(label="↩️ Položit zpět", style=discord.ButtonStyle.secondary,
                        custom_id="lab2_dice_return")
