@@ -23,16 +23,6 @@ game_room_map: dict[str, dict[str, str]] = {}
 game_room_state: dict[str, dict[str, dict]] = {}
 
 
-def give_murderer_start_items(game_id: str, players: list):
-    """Dá vrahu startovní předměty pro testování. Volej po init_game."""
-    from .player_state import get_state
-    for p in players:
-        state = get_state(game_id, p)
-        if getattr(state, "is_murderer", False):
-            for _ in range(3):
-                state.inventory.append("canister")
-            break
-
 
 def generate_room_map(game_id: str, rows: int, cols: int) -> dict[str, str]:
     """Předgeneruje typy místností pro celou mapu. Unique místnosti se přiřadí náhodně."""

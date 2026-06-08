@@ -119,6 +119,17 @@ ROOM_ACTIONS: dict[str, list[dict]] = {
     ],
     "exit_room": [
         {
+            "id": "admin_chest",
+            "label": "📦 Otevřít truhlu",
+            "requires_progress_value_max": 0,      # zobrazí se jen pokud chest_opened < 1
+            "progress_key": "chest_opened",
+            "progress_max": 1,
+            "reward_item": "canister",
+            "reward_count": 3,
+            "reward_text": "Otevřeš těžké víko truhly. Uvnitř leží tři kanystry s benzínem.\n\n🛢️ Získal jsi **3× Kanystr benzínu**!",
+            "one_time": True,
+        },
+        {
             "id": "refuel_generator",
             "label": "🛢️ Doplnit palivo do generátoru",
             "requires_item": "canister",
@@ -202,7 +213,24 @@ class SearchView(discord.ui.View):
 
         for action in actions:
             enabled = True
+            hidden = False
             hint = ""
+
+            # One-time akce: skryj pokud už byla použita (progress_key dosáhl max)
+            if action.get("one_time"):
+                prog_key = action.get("progress_key")
+                if prog_key and self.room_state.get(prog_key, 0) >= action.get("progress_max", 1):
+                    hidden = True
+
+            if hidden:
+                continue  # truhla už byla otevřena — vůbec nezobrazuj
+
+            # Podmínka: requires_progress_value_max — akce se zobrazí jen dokud progress < max
+            req_max = action.get("requires_progress_value_max")
+            if req_max is not None:
+                prog_key = action.get("progress_key", "")
+                if self.room_state.get(prog_key, 0) > req_max:
+                    continue  # přeskočit
 
             # Podmínka: equipnutý tag
             req_tag = action.get("requires_equipped_tag")
@@ -221,16 +249,16 @@ class SearchView(discord.ui.View):
                     enabled = False
                     hint = f"Potřebuješ {req_count}× {ITEMS[req_item]['emoji']} {ITEMS[req_item]['name']} (máš {has})"
 
-            # Podmínka: room_state progress
+            # Podmínka: room_state progress musí dosáhnout hodnoty
             req_prog_key = action.get("requires_progress_key")
             req_prog_val = action.get("requires_progress_value", 0)
-            if req_prog_key:
+            if req_prog_key and req_prog_val > 0:
                 current = self.room_state.get(req_prog_key, 0)
                 if current < req_prog_val:
                     enabled = False
                     hint = f"Generátor potřebuje palivo ({current}/{req_prog_val})"
 
-            label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓').strip()} — {hint}"
+            label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓📦').strip()} — {hint}"
             btn = discord.ui.Button(
                 label=label,
                 style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
