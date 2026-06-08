@@ -360,13 +360,19 @@ class DiceView(discord.ui.View):
         await interaction.response.edit_message(view=self)
         await interaction.followup.send(embed=embed)
 
-        # Obnov tlačítko "Vzít kostky" na původní zprávě místnosti
-        take_btn = discord.ui.Button(
-            label="🎲 Vzít kostky na podstavci",
-            style=discord.ButtonStyle.primary,
-            custom_id="lab2_take_dice",
-        )
-        take_btn.callback = self.room_view.take_dice_btn
-        self.room_view.add_item(take_btn)
+        # Obnov původní RoomView (nová instance = čisté tlačítko "Vzít kostky")
         if self.room_view.message:
-            await self.room_view.message.edit(view=self.room_view)
+            fresh_view = RoomView(
+                players=self.room_view.players,
+                room_name=self.room_view.room_name,
+                map_rows=self.room_view.map_rows,
+                map_cols=self.room_view.map_cols,
+                game_id=self.room_view.game_id,
+                came_from=self.room_view.came_from,
+                parent_channel=self.room_view.parent_channel,
+                thread=self.room_view.thread,
+            )
+            fresh_view.message = self.room_view.message
+            await self.room_view.message.edit(
+                embed=fresh_view._create_embed(), view=fresh_view
+            )
