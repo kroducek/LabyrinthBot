@@ -13,6 +13,7 @@ from collections import Counter
 from .player_state import init_game
 from .basic_menu import BasicMenuView, check_and_send_kill_prompt
 from .thread_manager import create_thread, move_group_to_room, archive_thread
+from .rooms import get_random_room_id, get_room_data
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -80,7 +81,13 @@ class RoomView(discord.ui.View):
         super().__init__(timeout=None)
         self.players = list(players)          # kopie, ne reference
         self.room_name = room_name
-        self.room_id = room_id or room_name
+        # Pokud room_id není zadáno, přiřaď náhodný typ (rohové = vždy hub)
+        if room_id is None:
+            col, row = parse_coord(room_name)
+            cidx = col_index(col)
+            is_corner = (row in (1, map_rows)) and (cidx in (0, map_cols - 1))
+            room_id = "labyrinth_hub" if is_corner else get_random_room_id(exclude_hub=True)
+        self.room_id = room_id
         self.map_rows = map_rows
         self.map_cols = map_cols
         self.game_id = game_id or room_name
@@ -102,11 +109,9 @@ class RoomView(discord.ui.View):
         corner_note = " *(rohová)*" if sides == 2 else (" *(okrajová)*" if sides == 3 else "")
 
         embed = discord.Embed(
-            title=f"🚪 Místnost [{self.room_name}]{corner_note}",
+            title=f"🚪 [{self.room_name}] {get_room_data(self.room_id)['name']}{corner_note}",
             description=(
-                f"*Ocitáte se v temné, chladné místnosti {self.room_name}.*\n"
-                "*Vzduch je těžký a ticho přerušuje jen vaše dýchání.*\n\n"
-                "Uprostřed místnosti stojí malý kamenný podstavec s vyrytými symboly.\n\n"
+                f"*{get_room_data(self.room_id)['description']}*\n\n"
                 f"**Hráči zde ({len(self.players)}):** " +
                 ", ".join(p.display_name for p in self.players)
             ),
@@ -217,7 +222,8 @@ class RoomView(discord.ui.View):
             for item in self.children:
                 if getattr(item, "custom_id", "") == f"lab2_door_{door_index}":
                     item.label = f"{emoji} {DIRECTION_LABEL[direction]} → {neighbor} [{new_cap}]"
-                    if new_cap == 0:
+                    # Zakáž až po zpracování — hráč který snížil na 0 prošel jako poslední
+                    if new_cap == 0 and len(self.choices) < len(self.players):
                         item.disabled = True
                     break
 
