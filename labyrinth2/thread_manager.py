@@ -79,10 +79,9 @@ async def move_group_to_room(
     threads = game_threads.get(game_id, {})
     old_thread: Optional[discord.Thread] = threads.get(old_key)
 
-    # Celá skupina šla stejným směrem — přejmenuj vlákno
+    # Celá skupina šla stejným směrem — pouze pošli zprávu, vlákno nepřejmenovávej
     if set(p.id for p in subgroup) == set(p.id for p in old_players):
         if old_thread:
-            await old_thread.edit(name=_thread_name(to_room, subgroup))
             if game_id not in game_threads:
                 game_threads[game_id] = {}
             game_threads[game_id].pop(old_key, None)
@@ -111,11 +110,7 @@ async def archive_thread(game_id: str, players: list[discord.Member], room_name:
     thread = game_threads.get(game_id, {}).get(key)
     if thread:
         try:
-            await thread.edit(
-                name=f"📁 {room_name} [opuštěno]",
-                archived=True,
-                locked=False,
-            )
+            await thread.edit(archived=True, locked=False)
         except discord.HTTPException:
             pass
         game_threads.get(game_id, {}).pop(key, None)
