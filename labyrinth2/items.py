@@ -50,6 +50,15 @@ ITEMS: dict[str, dict] = {
         "tags": ["zbraň", "nástroj"],
         "rarity": "uncommon",
     },
+    "wood": {
+        "id": "wood",
+        "name": "Dřevo",
+        "emoji": "🪵",
+        "description": "Kus dřeva odlomený ze starého stromu. Surový materiál – k čemu se hodí, to záleží na tobě.",
+        "tags": ["materiál"],
+        "rarity": "common",
+        "room_exclusive": ["plant_room"],   # spawnuje se jen v těchto místnostech
+    },
 }
 
 WEAPONS = {iid: item for iid, item in ITEMS.items() if "zbraň" in item["tags"]}
@@ -58,8 +67,12 @@ WEAPONS = {iid: item for iid, item in ITEMS.items() if "zbraň" in item["tags"]}
 RARITY_WEIGHT = {"common": 60, "uncommon": 30, "rare": 10}
 
 
-def random_item_id() -> str:
-    ids = list(ITEMS.keys())
+def random_item_id(room_name: str = None) -> str:
+    ids = [
+        iid for iid, item in ITEMS.items()
+        if "room_exclusive" not in item
+        or (room_name is not None and room_name in item["room_exclusive"])
+    ]
     weights = [RARITY_WEIGHT[ITEMS[i]["rarity"]] for i in ids]
     return random.choices(ids, weights=weights, k=1)[0]
 
@@ -104,7 +117,7 @@ class SearchView(discord.ui.View):
 
         # 60 % šance na nález
         if random.random() < 0.60:
-            found_id = random_item_id()
+            found_id = random_item_id(room_name=self.room_name)
             item = ITEMS[found_id]
             state = get_state(self.game_id, self.member)
             state.inventory.append(found_id)
