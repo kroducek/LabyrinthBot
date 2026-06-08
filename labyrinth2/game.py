@@ -13,9 +13,71 @@ from collections import Counter
 from .player_state import init_game
 from .basic_menu import BasicMenuView, check_and_send_kill_prompt
 from .thread_manager import create_thread, move_group_to_room, archive_thread
-from .rooms import get_random_room_id, get_room_data
+from .rooms import get_random_room_id, get_room_data, get_unique_room_ids
 
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# game_id -> { room_name -> room_id }   (předgenerovaná mapa typů místností)
+game_room_map: dict[str, dict[str, str]] = {}
+# game_id -> { room_name -> dict }      (sdílený stav místnosti, např. palivo generátoru)
+game_room_state: dict[str, dict[str, dict]] = {}
+
+
+def give_murderer_start_items(game_id: str, players: list):
+    """Dá vrahu startovní předměty pro testování. Volej po init_game."""
+    from .player_state import get_state
+    for p in players:
+        state = get_state(game_id, p)
+        if getattr(state, "is_murderer", False):
+            for _ in range(3):
+                state.inventory.append("canister")
+            break
+
+
+def generate_room_map(game_id: str, rows: int, cols: int) -> dict[str, str]:
+    """Předgeneruje typy místností pro celou mapu. Unique místnosti se přiřadí náhodně."""
+    if game_id in game_room_map:
+        return game_room_map[game_id]
+
+    room_map: dict[str, str] = {}
+
+    # Collect non-corner coords
+    non_corner = []
+    for r in range(1, rows + 1):
+        for ci in range(cols):
+            is_corner = (r in (1, rows)) and (ci in (0, cols - 1))
+            coord = f"{ALPHABET[ci]}{r}"
+            if is_corner:
+                room_map[coord] = "labyrinth_hub"
+            else:
+                non_corner.append(coord)
+
+    # Přiřaď unique místnosti (např. exit_room) náhodně
+    unique_ids = get_unique_room_ids()
+    unique_coords = random.sample(non_corner, min(len(unique_ids), len(non_corner)))
+    for coord, uid in zip(unique_coords, unique_ids):
+        room_map[coord] = uid
+
+    # Zbytek náhodně
+    for coord in non_corner:
+        if coord not in room_map:
+            room_map[coord] = get_random_room_id(exclude_hub=True)
+
+    game_room_map[game_id] = room_map
+    game_room_state[game_id] = {}
+    return room_map
+
+
+def get_room_id_for(game_id: str, room_name: str, map_rows: int, map_cols: int) -> str:
+    """Vrátí room_id pro konkrétní souřadnici — generuje mapu pokud ještě neexistuje."""
+    room_map = generate_room_map(game_id, map_rows, map_cols)
+    return room_map.get(room_name, "labyrinth_hub")
+
+
+def get_room_state(game_id: str, room_name: str) -> dict:
+    """Vrátí sdílený stav místnosti (vytvoří prázdný pokud neexistuje)."""
+    states = game_room_state.setdefault(game_id, {})
+    return states.setdefault(room_name, {})
 
 DIRECTION_EMOJI  = {"N": "⬆️", "S": "⬇️", "W": "⬅️", "E": "➡️"}
 DIRECTION_LABEL  = {"N": "Sever", "S": "Jih", "W": "Západ", "E": "Východ"}
@@ -81,12 +143,10 @@ class RoomView(discord.ui.View):
         super().__init__(timeout=None)
         self.players = list(players)          # kopie, ne reference
         self.room_name = room_name
-        # Pokud room_id není zadáno, přiřaď náhodný typ (rohové = vždy hub)
+        # Pokud room_id není zadáno, načti z předgenerované mapy hry
         if room_id is None:
-            col, row = parse_coord(room_name)
-            cidx = col_index(col)
-            is_corner = (row in (1, map_rows)) and (cidx in (0, map_cols - 1))
-            room_id = "labyrinth_hub" if is_corner else get_random_room_id(exclude_hub=True)
+            gid = game_id or room_name
+            room_id = get_room_id_for(gid, room_name, map_rows, map_cols)
         self.room_id = room_id
         self.map_rows = map_rows
         self.map_cols = map_cols
@@ -97,6 +157,7 @@ class RoomView(discord.ui.View):
         self.choices: dict[int, str] = {}     # user_id -> direction
         self.directions: list[tuple[str, int]] = []
         self.message: discord.Message = None
+        self.room_state: dict = get_room_state(self.game_id, room_name)
 
     @property
     def send_target(self) -> discord.abc.Messageable:
@@ -148,6 +209,7 @@ class RoomView(discord.ui.View):
             map_rows=self.map_rows,
             map_cols=self.map_cols,
             room_id=self.room_id,
+            room_state=self.room_state,
         )
 
     @discord.ui.button(label="🎲 Vzít kostky na podstavci", style=discord.ButtonStyle.primary,

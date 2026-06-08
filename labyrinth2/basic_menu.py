@@ -119,12 +119,14 @@ async def check_and_send_kill_prompt(
 
 class BasicMenuView(discord.ui.View):
     def __init__(self, game_id: str, players: list[discord.Member],
-                 room_name: str, map_rows: int = 4, map_cols: int = 4, room_id: str = None):
+                 room_name: str, map_rows: int = 4, map_cols: int = 4,
+                 room_id: str = None, room_state: dict = None):
         super().__init__(timeout=None)
         self.game_id = game_id
         self.players = players
         self.room_name = room_name
         self.room_id = room_id or room_name
+        self.room_state = room_state or {}
         self.map_rows = map_rows
         self.map_cols = map_cols
 
@@ -158,7 +160,7 @@ class BasicMenuView(discord.ui.View):
         if interaction.user not in self.players:
             await interaction.response.send_message("*Nejsi v této místnosti.*", ephemeral=True)
             return
-        view = SearchView(self.game_id, interaction.user, self.room_name, room_id=self.room_id)
+        view = SearchView(self.game_id, interaction.user, self.room_name, room_id=self.room_id, room_state=self.room_state)
         embed = discord.Embed(
             title=f"🔍 Průzkum — {self.room_name}",
             description="*Rozhlédneš se po místnosti a začneš prohledávat každý kout...*",
@@ -227,6 +229,25 @@ class KillView(discord.ui.View):
                 ),
                 color=0x8B0000,
             ))
+
+async def _escape_broadcast(interaction: discord.Interaction, game_id: str, escaped_player):
+    """Broadcastuje útěk hráče do všech vláken hry."""
+    from .thread_manager import game_threads
+    threads = game_threads.get(game_id, {})
+    embed = discord.Embed(
+        title="🚨 ÚTĚK Z LABYRINTU",
+        description=(
+            f"**{escaped_player.display_name}** nastartoval generátor a otevřel kovové dveře!\n\n"
+            f"*{escaped_player.mention} úspěšně utekl z labyrintu...*"
+        ),
+        color=0xFFD700,
+    )
+    for thread in threads.values():
+        try:
+            await thread.send(embed=embed)
+        except Exception:
+            pass
+
 
     @discord.ui.button(label="Přehodnotit", style=discord.ButtonStyle.secondary,
                        custom_id="lab2_dm_cancel")

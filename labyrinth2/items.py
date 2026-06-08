@@ -57,27 +57,20 @@ ITEMS: dict[str, dict] = {
         "description": "Kus dřeva odlomený ze starého stromu. Surový materiál – k čemu se hodí, to záleží na tobě.",
         "tags": ["materiál"],
         "rarity": "common",
-        "room_exclusive": ["plant_room"],   # spawnuje se jen v těchto místnostech
+        "room_exclusive": ["plant_room"],
+    },
+    "canister": {
+        "id": "canister",
+        "name": "Kanystr benzínu",
+        "emoji": "🛢️",
+        "description": "Těžký kanystr plný benzínu. Cítíš ostrý zápach paliva. Někde se to bude hodit.",
+        "tags": ["materiál", "palivo"],
+        "rarity": "uncommon",
+        "guaranteed": True,   # nespawnuje se náhodně, jen garantovaně na určených místech
     },
 }
 
 WEAPONS = {iid: item for iid, item in ITEMS.items() if "zbraň" in item["tags"]}
-
-# ── Room-specific akce ────────────────────────────────────────────────────────
-# room_id -> seznam akcí; každá akce definuje podmínku a výsledek
-ROOM_ACTIONS: dict[str, list[dict]] = {
-    "plant_room": [
-        {
-            "id": "chop_wood",
-            "label": "🪓 Nasekat dřevo",
-            "requires_equipped_tag": "nástroj",   # musí mít equipnutý předmět s tímto tagem
-            "requires_equipped_hint": "Vyžaduje sekeru nebo jiný nástroj",
-            "reward_item": "wood",
-            "reward_count": 3,
-            "reward_text": "Zasadíš ránu do kmene stromu. Třísky létají na všechny strany...\n\n🪵 Získal jsi **3× Dřevo**!",
-        },
-    ],
-}
 
 # Váhy pro rarity
 RARITY_WEIGHT = {"common": 60, "uncommon": 30, "rare": 10}
@@ -86,8 +79,11 @@ RARITY_WEIGHT = {"common": 60, "uncommon": 30, "rare": 10}
 def random_item_id(room_name: str = None) -> str:
     ids = [
         iid for iid, item in ITEMS.items()
-        if "room_exclusive" not in item
-        or (room_name is not None and room_name in item["room_exclusive"])
+        if not item.get("guaranteed", False)                          # nikdy náhodně
+        and (
+            "room_exclusive" not in item
+            or (room_name is not None and room_name in item["room_exclusive"])
+        )
     ]
     weights = [RARITY_WEIGHT[ITEMS[i]["rarity"]] for i in ids]
     return random.choices(ids, weights=weights, k=1)[0]
@@ -108,15 +104,56 @@ def item_embed(item_id: str) -> discord.Embed:
 
 # ── View pro průzkum místnosti ────────────────────────────────────────────────
 
+# ── Room-specific akce ────────────────────────────────────────────────────────
+ROOM_ACTIONS: dict[str, list[dict]] = {
+    "plant_room": [
+        {
+            "id": "chop_wood",
+            "label": "🪓 Nasekat dřevo",
+            "requires_equipped_tag": "nástroj",
+            "requires_equipped_hint": "Vyžaduje sekeru nebo jiný nástroj",
+            "reward_item": "wood",
+            "reward_count": 3,
+            "reward_text": "Zasadíš ránu do kmene stromu. Třísky létají na všechny strany...\n\n🪵 Získal jsi **3× Dřevo**!",
+        },
+    ],
+    "exit_room": [
+        {
+            "id": "refuel_generator",
+            "label": "🛢️ Doplnit palivo do generátoru",
+            "requires_item": "canister",
+            "requires_item_count": 1,
+            "consume_item": True,
+            "reward_item": None,
+            "reward_count": 0,
+            "reward_text": "Přeliješ kanystr do generátoru. Hladina paliva stoupá...",
+            "progress_key": "generator_fuel",   # klíč v room_state pro sledování progressu
+            "progress_max": 3,
+        },
+        {
+            "id": "open_exit",
+            "label": "🚪 Spustit generátor a otevřít dveře",
+            "requires_progress_key": "generator_fuel",
+            "requires_progress_value": 3,
+            "reward_item": None,
+            "reward_count": 0,
+            "reward_text": "Generátor zahřmí a zábleskne. Těžké kovové dveře se pomalu otevírají...\n\n**Svoboda je na dosah.**",
+            "triggers_escape": True,
+        },
+    ],
+}
+
+
 class SearchView(discord.ui.View):
     """Ephemeral view – hráč hledá předměty v místnosti."""
 
-    def __init__(self, game_id: str, member: discord.Member, room_name: str, room_id: str = None):
+    def __init__(self, game_id: str, member: discord.Member, room_name: str, room_id: str = None, room_state: dict = None):
         super().__init__(timeout=60)
         self.game_id = game_id
         self.member = member
         self.room_name = room_name
         self.room_id = room_id or room_name
+        self.room_state = room_state or {}   # sdílený stav místnosti (fuel atd.)
         self.searched = False
 
     @discord.ui.button(label="🔍 Prohledat místnost", style=discord.ButtonStyle.primary, custom_id="lab2_search_room")
@@ -153,56 +190,119 @@ class SearchView(discord.ui.View):
                 color=0x555555,
             )
 
-        # Přidej room-specific akce pokud hráč splňuje podmínky
         self._add_room_action_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 
     def _add_room_action_buttons(self):
         """Přidá tlačítka room-specific akcí pokud hráč splňuje podmínky."""
-        from .rooms import get_room_data
         actions = ROOM_ACTIONS.get(self.room_id, [])
         if not actions:
             return
         state = get_state(self.game_id, self.member)
+
         for action in actions:
+            enabled = True
+            hint = ""
+
+            # Podmínka: equipnutý tag
             req_tag = action.get("requires_equipped_tag")
-            hint = action.get("requires_equipped_hint", "")
             if req_tag:
-                equipped_id = state.equipped
-                has_tool = (
-                    equipped_id is not None
-                    and req_tag in ITEMS.get(equipped_id, {}).get("tags", [])
-                )
-                label = action["label"] if has_tool else f"🔒 {action['label'].split(' ', 1)[1]} — {hint}"
-                btn = discord.ui.Button(
-                    label=label,
-                    style=discord.ButtonStyle.success if has_tool else discord.ButtonStyle.secondary,
-                    custom_id=f"lab2_room_action_{action['id']}",
-                    disabled=not has_tool,
-                )
-                btn.callback = self._make_action_callback(action)
-                self.add_item(btn)
+                eq = state.equipped
+                if not eq or req_tag not in ITEMS.get(eq, {}).get("tags", []):
+                    enabled = False
+                    hint = action.get("requires_equipped_hint", f"Vyžaduje: {req_tag}")
+
+            # Podmínka: item v inventáři
+            req_item = action.get("requires_item")
+            req_count = action.get("requires_item_count", 1)
+            if req_item:
+                has = state.inventory.count(req_item)
+                if has < req_count:
+                    enabled = False
+                    hint = f"Potřebuješ {req_count}× {ITEMS[req_item]['emoji']} {ITEMS[req_item]['name']} (máš {has})"
+
+            # Podmínka: room_state progress
+            req_prog_key = action.get("requires_progress_key")
+            req_prog_val = action.get("requires_progress_value", 0)
+            if req_prog_key:
+                current = self.room_state.get(req_prog_key, 0)
+                if current < req_prog_val:
+                    enabled = False
+                    hint = f"Generátor potřebuje palivo ({current}/{req_prog_val})"
+
+            label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓').strip()} — {hint}"
+            btn = discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
+                custom_id=f"lab2_room_action_{action['id']}",
+                disabled=not enabled,
+            )
+            btn.callback = self._make_action_callback(action)
+            self.add_item(btn)
 
     def _make_action_callback(self, action: dict):
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.member.id:
                 await interaction.response.send_message("*Tohle není tvoje akce.*", ephemeral=True)
                 return
+
             state = get_state(self.game_id, self.member)
-            reward_id = action["reward_item"]
-            count = action.get("reward_count", 1)
-            for _ in range(count):
-                state.inventory.append(reward_id)
-            item = ITEMS[reward_id]
+
+            # Spotřebuj item pokud je nastaveno
+            if action.get("consume_item") and action.get("requires_item"):
+                item_id = action["requires_item"]
+                if item_id in state.inventory:
+                    state.inventory.remove(item_id)
+
+            # Přidej reward pokud existuje
+            reward_id = action.get("reward_item")
+            if reward_id:
+                for _ in range(action.get("reward_count", 1)):
+                    state.inventory.append(reward_id)
+
+            # Aktualizuj room_state progress
+            prog_key = action.get("progress_key")
+            prog_max = action.get("progress_max", 0)
+            if prog_key:
+                self.room_state[prog_key] = min(
+                    self.room_state.get(prog_key, 0) + 1, prog_max
+                )
+                current = self.room_state[prog_key]
+                reward_text = action["reward_text"] + f"\n\n⛽ Generátor: **{current}/{prog_max}**"
+            else:
+                reward_text = action["reward_text"]
+
+            item_data = ITEMS.get(reward_id) if reward_id else None
             embed = discord.Embed(
-                title=f"{item['emoji']} {action['label']}",
-                description=action["reward_text"],
+                title=action["label"],
+                description=reward_text,
                 color=0x4CAF50,
             )
-            # Deaktivuj tlačítko po použití
+
+            # Úspěšný útěk
+            if action.get("triggers_escape"):
+                embed = discord.Embed(
+                    title="🚨 ÚTĚK!",
+                    description=(
+                        f"**{interaction.user.display_name}** nastartoval generátor!\n\n"
+                        f"{reward_text}\n\n"
+                        f"*{interaction.user.display_name} úspěšně utekl z labyrintu!*"
+                    ),
+                    color=0xFFD700,
+                )
+                for btn in self.children:
+                    btn.disabled = True
+                await interaction.response.edit_message(embed=embed, view=self)
+                # Broadcast do vlákna
+                from .basic_menu import _escape_broadcast
+                await _escape_broadcast(interaction, self.game_id, interaction.user)
+                return
+
+            # Deaktivuj toto tlačítko po použití
             for btn in self.children:
                 if getattr(btn, "custom_id", "") == f"lab2_room_action_{action['id']}":
                     btn.disabled = True
                     break
+
             await interaction.response.edit_message(embed=embed, view=self)
         return callback

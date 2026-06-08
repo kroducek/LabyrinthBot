@@ -10,32 +10,50 @@ ROOMS = {
         "id": "dark_corridor",
         "name": "Zatemnělá chodba",
         "description": "Temná místnost, kde není vidět na krok. Cítíš chladný průvan ze stěn. Někde blízko kape voda.",
+        "spawn_weight": 50,
     },
     "abandoned_shrine": {
         "id": "abandoned_shrine",
         "name": "Opuštěná svatyně",
         "description": "Stěny jsou lemovány starými rozbitými sochami. Zem je pokryta prachem a rozbitým sklem.",
-        "spawn_weight": 10,
+        "spawn_weight": 50,
     },
     "plant_room": {
         "id": "plant_room",
         "name": "Stromová komnata",
         "description": "Místnost je stejná jako ta na začátku, ale středem prostupuje mohutný strom. Jeho kořeny trhají kamennou dlažbu a větve sahají ke stropu. Do kmene byl ručně vytesán otvor — uvnitř spočívá kamenný podstavec s kostkami.",
-        "spawn_weight": 90,
-        "loot_table": ["wood"],   # předměty navíc k výchozímu lootu
+        "spawn_weight": 50,
+        "loot_table": ["wood"],
+    },
+    "exit_room": {
+        "id": "exit_room",
+        "name": "Strojovna úniku",
+        "description": "Uprostřed místnosti stojí starý rezavý generátor obrostlý kabely. Vedle něj se tyčí masivní kovové dveře s elektrickým zámkem. Na generátoru svítí červená kontrolka — palivová nádrž je prázdná.",
+        "spawn_weight": 0,    # nespawnuje náhodně — přiřazuje se explicitně jako unique
+        "unique": True,       # v celé mapě může být nejvýše jedna
     },
 }
 
-# Váhy spawnu místností (výchozí = 10 pokud není uvedeno)
+# Váhy spawnu místností (výchozí = 50 pokud není uvedeno)
 def _room_weight(room_id: str) -> int:
-    return ROOMS[room_id].get("spawn_weight", 10)
+    return ROOMS[room_id].get("spawn_weight", 50)
 
 def get_room_data(room_id: str) -> dict:
     return ROOMS.get(room_id, ROOMS["labyrinth_hub"])
 
 def get_random_room_id(exclude_hub: bool = True) -> str:
-    pool = [r for r in ROOMS.keys() if not (exclude_hub and r == "labyrinth_hub")]
+    """Vrátí náhodné room_id — vylučuje hub a unique místnosti (ty se přiřazují explicitně)."""
+    pool = [
+        r for r in ROOMS.keys()
+        if not (exclude_hub and r == "labyrinth_hub")
+        and not ROOMS[r].get("unique", False)
+        and _room_weight(r) > 0
+    ]
     if not pool:
         return "labyrinth_hub"
     weights = [_room_weight(r) for r in pool]
     return random.choices(pool, weights=weights, k=1)[0]
+
+def get_unique_room_ids() -> list[str]:
+    """Vrátí seznam všech unique místností které se musí přiřadit explicitně."""
+    return [rid for rid, r in ROOMS.items() if r.get("unique", False)]
