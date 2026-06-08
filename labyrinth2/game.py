@@ -14,9 +14,6 @@ from .player_state import init_game
 from .basic_menu import BasicMenuView, check_and_send_kill_prompt
 from .thread_manager import create_thread, move_group_to_room, archive_thread
 
-# channel_id -> RoomView  (pro /roll příkaz)
-active_rooms: dict[int, "RoomView"] = {}
-
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 DIRECTION_EMOJI  = {"N": "⬆️", "S": "⬇️", "W": "⬅️", "E": "➡️"}
@@ -155,23 +152,22 @@ class RoomView(discord.ui.View):
             return
 
         self.remove_item(button)
+        await interaction.response.edit_message(view=self)
 
         sides = dice_sides(self.room_name, self.map_rows, self.map_cols)
-        n_players = max(1, len(self.players))
 
         embed = discord.Embed(
-            title="🎲 Házení kostkami",
+            title="🎲 Kostky sebrány",
             description=(
-                f"**{interaction.user.display_name}** přistoupil k podstavci a vzal si kostky.\n\n"
-                f"Tato místnost má **{sides} průchodů** — kostky mají **{sides} stěn**.\n\n"
-                f"👉 **Použij příkaz `/roll {sides}`** pro hození {n_players} kostkami!"
+                f"**{interaction.user.display_name}** přistoupil k podstavci a sebral kostky.\n\n"
+                f"Místnost má **{sides} průchodů** — kostky mají **{sides} stěn**.\n\n"
+                "*Co uděláš s kostkami?*"
             ),
             color=0x2B2D31,
         )
 
-        await interaction.response.edit_message(view=self)
-        await self.send_target.send(embed=embed)
-        active_rooms[interaction.channel_id] = self
+        dice_view = DiceView(room_view=self, holder=interaction.user, sides=sides)
+        await self.send_target.send(embed=embed, view=dice_view)
 
     def apply_roll_and_show_doors(self, rolls: list[int]):
         available = get_available_directions(self.room_name, self.map_rows, self.map_cols)
@@ -285,3 +281,92 @@ class RoomView(discord.ui.View):
                 )
 
         return callback
+
+# ── DiceView ──────────────────────────────────────────────────────────────────
+
+class DiceView(discord.ui.View):
+    """Zobrazí se po sebrání kostek — hráč může hodit nebo položit zpět."""
+
+    def __init__(self, room_view: "RoomView", holder: discord.Member, sides: int):
+        super().__init__(timeout=None)
+        self.room_view = room_view
+        self.holder = holder
+        self.sides = sides
+
+    @discord.ui.button(label="🎲 Hodit s kostkami", style=discord.ButtonStyle.success,
+                       custom_id="lab2_dice_roll")
+    async def roll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.holder.id:
+            await interaction.response.send_message(
+                "*Kostky drží někdo jiný!*", ephemeral=True
+            )
+            return
+
+        rolls = [random.randint(1, self.sides) for _ in self.room_view.players]
+
+        result_lines = "\n".join(
+            f"🎲 {p.display_name}: **{r}**"
+            for p, r in zip(self.room_view.players, rolls)
+        )
+
+        embed = discord.Embed(
+            title="🎲 Výsledek hodu",
+            description=(
+                f"**{interaction.user.display_name}** hodil kostkami!\n\n"
+                f"{result_lines}\n\n"
+                "*Magický mechanismus podstavce rozděluje kapacitu do dveří...*"
+            ),
+            color=0x00FF00,
+        )
+
+        # Deaktivuj obě tlačítka
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(embed=embed)
+
+        # Aplikuj hod na dveře
+        self.room_view.apply_roll_and_show_doors(rolls)
+        if self.room_view.message:
+            room_embed = self.room_view._create_embed()
+            room_embed.add_field(
+                name="Dveře se otevřely",
+                value="Cesta dál je volná. Jakým směrem se vydáte?",
+                inline=False,
+            )
+            await self.room_view.message.edit(embed=room_embed, view=self.room_view)
+
+    @discord.ui.button(label="↩️ Položit zpět", style=discord.ButtonStyle.secondary,
+                       custom_id="lab2_dice_return")
+    async def return_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.holder.id:
+            await interaction.response.send_message(
+                "*Kostky drží někdo jiný!*", ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="↩️ Kostky vráceny",
+            description=(
+                f"**{interaction.user.display_name}** položil kostky zpět na podstavec.\n\n"
+                "*Někdo jiný si je může vzít.*"
+            ),
+            color=0x2B2D31,
+        )
+
+        # Deaktivuj obě tlačítka
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(embed=embed)
+
+        # Obnov tlačítko "Vzít kostky" na původní zprávě místnosti
+        take_btn = discord.ui.Button(
+            label="🎲 Vzít kostky na podstavci",
+            style=discord.ButtonStyle.primary,
+            custom_id="lab2_take_dice",
+        )
+        take_btn.callback = self.room_view.take_dice_btn
+        self.room_view.add_item(take_btn)
+        if self.room_view.message:
+            await self.room_view.message.edit(view=self.room_view)
