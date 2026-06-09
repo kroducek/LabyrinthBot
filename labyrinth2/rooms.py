@@ -6,6 +6,12 @@ ROOMS = {
         "name": "Labyrinth Hub",
         "description": "Magické dveře, nad kterými visí runová tabule. Moderní osvětlené prostředí. Uprostřed místnosti stojí podestál.",
     },
+    "start_room": {
+        "id": "start_room",
+        "name": "Vstupní komnata",
+        "description": "Rohová místnost s kamennou podlahou a pochodněmi na stěnách. V rohu stojí masivní okovaná truhla — vypadá, jako by tu čekala na někoho.",
+        "spawn_weight": 0,   # přiřazuje se explicitně na rohové souřadnice
+    },
     "dark_corridor": {
         "id": "dark_corridor",
         "name": "Zatemnělá chodba",
@@ -39,18 +45,18 @@ def _room_weight(room_id: str) -> int:
     return ROOMS[room_id].get("spawn_weight", 50)
 
 def get_room_data(room_id: str) -> dict:
-    return ROOMS.get(room_id, ROOMS["labyrinth_hub"])
+    return ROOMS.get(room_id, ROOMS["start_room"])
 
 def get_random_room_id(exclude_hub: bool = True) -> str:
-    """Vrátí náhodné room_id — vylučuje hub a unique místnosti (ty se přiřazují explicitně)."""
+    """Vrátí náhodné room_id — vylučuje hub, start_room a unique místnosti."""
     pool = [
         r for r in ROOMS.keys()
-        if not (exclude_hub and r == "labyrinth_hub")
+        if r not in ("labyrinth_hub", "start_room")
         and not ROOMS[r].get("unique", False)
         and _room_weight(r) > 0
     ]
     if not pool:
-        return "labyrinth_hub"
+        return "start_room"
     weights = [_room_weight(r) for r in pool]
     return random.choices(pool, weights=weights, k=1)[0]
 

@@ -38,7 +38,7 @@ def generate_room_map(game_id: str, rows: int, cols: int) -> dict[str, str]:
             is_corner = (r in (1, rows)) and (ci in (0, cols - 1))
             coord = f"{ALPHABET[ci]}{r}"
             if is_corner:
-                room_map[coord] = "labyrinth_hub"
+                room_map[coord] = "start_room"
             else:
                 non_corner.append(coord)
 

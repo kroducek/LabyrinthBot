@@ -106,6 +106,18 @@ def item_embed(item_id: str) -> discord.Embed:
 
 # ── Room-specific akce ────────────────────────────────────────────────────────
 ROOM_ACTIONS: dict[str, list[dict]] = {
+    "start_room": [
+        {
+            "id": "admin_chest",
+            "label": "📦 Otevřít truhlu",
+            "one_time": True,
+            "progress_key": "chest_opened",
+            "progress_max": 1,
+            "reward_item": "canister",
+            "reward_count": 3,
+            "reward_text": "Otevřeš těžké okované víko. Uvnitř leží tři kanystry s benzínem.\n\n🛢️ Získal jsi **3× Kanystr benzínu**!",
+        },
+    ],
     "plant_room": [
         {
             "id": "chop_wood",
@@ -118,17 +130,6 @@ ROOM_ACTIONS: dict[str, list[dict]] = {
         },
     ],
     "exit_room": [
-        {
-            "id": "admin_chest",
-            "label": "📦 Otevřít truhlu",
-            "requires_progress_value_max": 0,      # zobrazí se jen pokud chest_opened < 1
-            "progress_key": "chest_opened",
-            "progress_max": 1,
-            "reward_item": "canister",
-            "reward_count": 3,
-            "reward_text": "Otevřeš těžké víko truhly. Uvnitř leží tři kanystry s benzínem.\n\n🛢️ Získal jsi **3× Kanystr benzínu**!",
-            "one_time": True,
-        },
         {
             "id": "refuel_generator",
             "label": "🛢️ Doplnit palivo do generátoru",
