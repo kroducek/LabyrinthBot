@@ -205,8 +205,18 @@ class SearchView(discord.ui.View):
         self._add_room_action_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 
+    def _refresh_action_buttons(self):
+        """Odstraní stará action tlačítka a přidá nová podle aktuálního stavu."""
+        to_remove = [
+            item for item in self.children
+            if getattr(item, "custom_id", "").startswith("lab2_room_action_")
+        ]
+        for item in to_remove:
+            self.remove_item(item)
+        self._add_room_action_buttons()
+
     def _add_room_action_buttons(self):
-        """Přidá tlačítka room-specific akcí pokud hráč splňuje podmínky."""
+        """Přidá tlačítka room-specific akcí podle aktuálního stavu místnosti."""
         actions = ROOM_ACTIONS.get(self.room_id, [])
         if not actions:
             return
@@ -214,24 +224,20 @@ class SearchView(discord.ui.View):
 
         for action in actions:
             enabled = True
-            hidden = False
             hint = ""
+            prog_key = action.get("progress_key")
+            prog_max = action.get("progress_max", 0)
+            current_prog = self.room_state.get(prog_key, 0) if prog_key else 0
 
-            # One-time akce: skryj pokud už byla použita (progress_key dosáhl max)
-            if action.get("one_time"):
-                prog_key = action.get("progress_key")
-                if prog_key and self.room_state.get(prog_key, 0) >= action.get("progress_max", 1):
-                    hidden = True
+            # One-time akce: skryj pokud už byla použita
+            if action.get("one_time") and prog_key:
+                if current_prog >= prog_max:
+                    continue
 
-            if hidden:
-                continue  # truhla už byla otevřena — vůbec nezobrazuj
-
-            # Podmínka: requires_progress_value_max — akce se zobrazí jen dokud progress < max
-            req_max = action.get("requires_progress_value_max")
-            if req_max is not None:
-                prog_key = action.get("progress_key", "")
-                if self.room_state.get(prog_key, 0) > req_max:
-                    continue  # přeskočit
+            # Akce která plní progress: skryj když je nádrž/counter plný
+            if prog_key and prog_max and not action.get("one_time"):
+                if current_prog >= prog_max:
+                    continue   # refuel_generator zmizí když je fuel=3
 
             # Podmínka: equipnutý tag
             req_tag = action.get("requires_equipped_tag")
@@ -250,14 +256,14 @@ class SearchView(discord.ui.View):
                     enabled = False
                     hint = f"Potřebuješ {req_count}× {ITEMS[req_item]['emoji']} {ITEMS[req_item]['name']} (máš {has})"
 
-            # Podmínka: room_state progress musí dosáhnout hodnoty
+            # Podmínka: jiný progress musí dosáhnout hodnoty (open_exit čeká na fuel=3)
             req_prog_key = action.get("requires_progress_key")
             req_prog_val = action.get("requires_progress_value", 0)
             if req_prog_key and req_prog_val > 0:
-                current = self.room_state.get(req_prog_key, 0)
-                if current < req_prog_val:
+                cur = self.room_state.get(req_prog_key, 0)
+                if cur < req_prog_val:
                     enabled = False
-                    hint = f"Generátor potřebuje palivo ({current}/{req_prog_val})"
+                    hint = f"Generátor potřebuje palivo ({cur}/{req_prog_val})"
 
             label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓📦').strip()} — {hint}"
             btn = discord.ui.Button(
@@ -301,7 +307,6 @@ class SearchView(discord.ui.View):
             else:
                 reward_text = action["reward_text"]
 
-            item_data = ITEMS.get(reward_id) if reward_id else None
             embed = discord.Embed(
                 title=action["label"],
                 description=reward_text,
@@ -322,16 +327,11 @@ class SearchView(discord.ui.View):
                 for btn in self.children:
                     btn.disabled = True
                 await interaction.response.edit_message(embed=embed, view=self)
-                # Broadcast do vlákna
                 from .basic_menu import _escape_broadcast
                 await _escape_broadcast(interaction, self.game_id, interaction.user)
                 return
 
-            # Deaktivuj toto tlačítko po použití
-            for btn in self.children:
-                if getattr(btn, "custom_id", "") == f"lab2_room_action_{action['id']}":
-                    btn.disabled = True
-                    break
-
+            # Refreshni všechna action tlačítka podle nového stavu
+            self._refresh_action_buttons()
             await interaction.response.edit_message(embed=embed, view=self)
         return callback
