@@ -114,8 +114,12 @@ class LabyrinthLobby(discord.ui.View):
         from .thread_manager import create_thread
         from .basic_menu import check_and_send_kill_prompt
 
+        # Ujisti se že máme TextChannel, ne Thread (pokud /lobby spuštěn ve vlákně)
+        raw_channel = interaction.channel
+        parent_channel = raw_channel.parent if isinstance(raw_channel, discord.Thread) else raw_channel
+
         start_thread = await create_thread(
-            channel=interaction.channel,
+            channel=parent_channel,
             game_id=game_id,
             players=self.players,
             room_name=start_coord,
@@ -124,7 +128,7 @@ class LabyrinthLobby(discord.ui.View):
         room_view = RoomView(
             self.players, room_name=start_coord,
             map_rows=rows, map_cols=cols, game_id=game_id,
-            parent_channel=interaction.channel,
+            parent_channel=parent_channel,
             thread=start_thread,
         )
         menu_view = room_view._build_menu()

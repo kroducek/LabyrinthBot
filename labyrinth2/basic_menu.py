@@ -230,6 +230,19 @@ class KillView(discord.ui.View):
                 color=0x8B0000,
             ))
 
+    @discord.ui.button(label="Přehodnotit", style=discord.ButtonStyle.secondary,
+                       custom_id="lab2_dm_cancel")
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="👁️ Přehodnotil jsi to",
+                description="*Tentokrát jsi nechal oběť žít...*",
+                color=0x2B2D31,
+            ),
+            view=None,
+        )
+
+
 async def _escape_broadcast(interaction: discord.Interaction, game_id: str, escaped_player):
     """Broadcastuje útěk hráče do všech vláken hry."""
     from .thread_manager import game_threads
@@ -247,16 +260,3 @@ async def _escape_broadcast(interaction: discord.Interaction, game_id: str, esca
             await thread.send(embed=embed)
         except Exception:
             pass
-
-
-    @discord.ui.button(label="Přehodnotit", style=discord.ButtonStyle.secondary,
-                       custom_id="lab2_dm_cancel")
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            embed=discord.Embed(
-                title="👁️ Přehodnotil jsi to",
-                description="*Tentokrát jsi nechal oběť žít...*",
-                color=0x2B2D31,
-            ),
-            view=None,
-        )
