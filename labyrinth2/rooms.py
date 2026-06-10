@@ -15,7 +15,8 @@ ROOMS = {
     "dark_corridor": {
         "id": "dark_corridor",
         "name": "Zatemnělá chodba",
-        "description": "Temná místnost, kde není vidět na krok. Cítíš chladný průvan ze stěn. Někde blízko kape voda.",
+        "description": "Naprostá tma. Neslyšíš nic kromě vlastního dechu a vzdáleného kapání vody.",
+        "description_lit": "V rohu místnosti sedí tvor, připomínající děsivého mimozemského savce. Nehýbe se, ale pozoruje. Něco hlídá…",
         "spawn_weight": 50,
     },
     "abandoned_shrine": {

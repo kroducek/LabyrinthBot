@@ -66,7 +66,16 @@ ITEMS: dict[str, dict] = {
         "description": "Těžký kanystr plný benzínu. Cítíš ostrý zápach paliva. Někde se to bude hodit.",
         "tags": ["materiál", "palivo"],
         "rarity": "uncommon",
-        "guaranteed": True,   # nespawnuje se náhodně, jen garantovaně na určených místech
+        "guaranteed": True,
+    },
+    "gun": {
+        "id": "gun",
+        "name": "Pistole",
+        "emoji": "🔫",
+        "description": "Těžká služební pistole. Nabitá. Doufejme, že ji nebudeš potřebovat.",
+        "tags": ["zbraň"],
+        "rarity": "rare",
+        "guaranteed": True,
     },
 }
 
@@ -113,9 +122,51 @@ ROOM_ACTIONS: dict[str, list[dict]] = {
             "one_time": True,
             "progress_key": "chest_opened",
             "progress_max": 1,
-            "reward_item": "canister",
-            "reward_count": 3,
-            "reward_text": "Otevřeš těžké okované víko. Uvnitř leží tři kanystry s benzínem.\n\n🛢️ Získal jsi **3× Kanystr benzínu**!",
+            "reward_items": [
+                {"id": "canister",   "count": 3},
+                {"id": "lantern",    "count": 1},
+                {"id": "gun",        "count": 1},
+            ],
+            "reward_text": "Otevřeš těžké okované víko. Uvnitř leží kanystry, baterka a pistole.\n\n🛢️ 3× Kanystr  🪔 Lucerna  🔫 Pistole",
+        },
+    ],
+    "dark_corridor": [
+        {
+            "id": "use_flashlight",
+            "label": "🪔 Rozsvítit lucernu",
+            "requires_item": "lantern",
+            "one_time": True,
+            "progress_key": "lit",
+            "progress_max": 1,
+            "reward_item": None,
+            "reward_count": 0,
+            "reward_text": "Baterka ozáří místnost chladným světlem.\n\nV rohu sedí tvor, připomínající děsivého mimozemského savce. Nehýbe se, ale pozoruje. Něco hlídá…",
+            "triggers_room_update": True,
+        },
+        {
+            "id": "approach_creature",
+            "label": "👁️ Přiblížit se k tvorovi",
+            "requires_progress_key": "lit",
+            "requires_progress_value": 1,
+            "hide_if_key": "creature_dead",
+            "hide_if_value": 1,
+            "reward_item": None,
+            "reward_count": 0,
+            "reward_text": "Přiblížíš se opatrně. Tvor otočí hlavu — vydá hluboké, nízkofrekvenční zavrčení. Tvoje srdce přeskočí.",
+        },
+        {
+            "id": "shoot_creature",
+            "label": "🔫 Zastřelit tvora",
+            "requires_progress_key": "lit",
+            "requires_progress_value": 1,
+            "requires_item": "gun",
+            "hide_if_key": "creature_dead",
+            "hide_if_value": 1,
+            "one_time": True,
+            "progress_key": "creature_dead",
+            "progress_max": 1,
+            "reward_items": [{"id": "canister", "count": 1}],
+            "reward_text": "Výstřel rozburácí tiché chodby. Tvor se skácí. V jeho tlamě byl kanystr s benzínem.\n\n🛢️ Získal jsi **1× Kanystr benzínu**!",
         },
     ],
     "plant_room": [
@@ -159,13 +210,15 @@ ROOM_ACTIONS: dict[str, list[dict]] = {
 class SearchView(discord.ui.View):
     """Ephemeral view – hráč hledá předměty v místnosti."""
 
-    def __init__(self, game_id: str, member: discord.Member, room_name: str, room_id: str = None, room_state: dict = None):
+    def __init__(self, game_id: str, member: discord.Member, room_name: str,
+                 room_id: str = None, room_state: dict = None, room_view=None):
         super().__init__(timeout=60)
         self.game_id = game_id
         self.member = member
         self.room_name = room_name
         self.room_id = room_id or room_name
-        self.room_state = room_state or {}   # sdílený stav místnosti (fuel atd.)
+        self.room_state = room_state or {}
+        self.room_view = room_view   # reference pro update embed po rozsvícení
         self.searched = False
 
     @discord.ui.button(label="🔍 Prohledat místnost", style=discord.ButtonStyle.primary, custom_id="lab2_search_room")
@@ -180,6 +233,18 @@ class SearchView(discord.ui.View):
 
         self.searched = True
         button.disabled = True
+
+        # Zkontroluj tmu — ve tmě průzkum nefunguje
+        from .darkness import is_dark
+        if is_dark(self.room_id, self.room_state):
+            embed = discord.Embed(
+                title="🌑 Je tu moc tma...",
+                description="*Nevidíš na krok. Bez světla tu nic nenajdeš.*",
+                color=0x111111,
+            )
+            self._add_room_action_buttons()
+            await interaction.response.edit_message(embed=embed, view=self)
+            return
 
         # 60 % šance na nález
         if random.random() < 0.60:
@@ -234,10 +299,16 @@ class SearchView(discord.ui.View):
                 if current_prog >= prog_max:
                     continue
 
-            # Akce která plní progress: skryj když je nádrž/counter plný
+            # Akce která plní progress: skryj když je plný
             if prog_key and prog_max and not action.get("one_time"):
                 if current_prog >= prog_max:
-                    continue   # refuel_generator zmizí když je fuel=3
+                    continue
+
+            # hide_if_key: skryj akci pokud jiný progress dosáhl hodnoty (např. tvor je mrtvý)
+            hide_key = action.get("hide_if_key")
+            hide_val = action.get("hide_if_value", 1)
+            if hide_key and self.room_state.get(hide_key, 0) >= hide_val:
+                continue
 
             # Podmínka: equipnutý tag
             req_tag = action.get("requires_equipped_tag")
@@ -254,9 +325,9 @@ class SearchView(discord.ui.View):
                 has = state.inventory.count(req_item)
                 if has < req_count:
                     enabled = False
-                    hint = f"Potřebuješ {req_count}× {ITEMS[req_item]['emoji']} {ITEMS[req_item]['name']} (máš {has})"
+                    hint = f"Potřebuješ {ITEMS[req_item]['emoji']} {ITEMS[req_item]['name']} (nemáš)"
 
-            # Podmínka: jiný progress musí dosáhnout hodnoty (open_exit čeká na fuel=3)
+            # Podmínka: jiný progress musí dosáhnout hodnoty
             req_prog_key = action.get("requires_progress_key")
             req_prog_val = action.get("requires_progress_value", 0)
             if req_prog_key and req_prog_val > 0:
@@ -265,7 +336,7 @@ class SearchView(discord.ui.View):
                     enabled = False
                     hint = f"Generátor potřebuje palivo ({cur}/{req_prog_val})"
 
-            label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓📦').strip()} — {hint}"
+            label = action["label"] if enabled else f"🔒 {action['label'].lstrip('🛢️🚪🪓📦🔦👁️🔫').strip()} — {hint}"
             btn = discord.ui.Button(
                 label=label,
                 style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
@@ -289,7 +360,10 @@ class SearchView(discord.ui.View):
                 if item_id in state.inventory:
                     state.inventory.remove(item_id)
 
-            # Přidej reward pokud existuje
+            # Přidej odměny — podporuje reward_items (list) i reward_item (string)
+            for entry in action.get("reward_items", []):
+                for _ in range(entry.get("count", 1)):
+                    state.inventory.append(entry["id"])
             reward_id = action.get("reward_item")
             if reward_id:
                 for _ in range(action.get("reward_count", 1)):
@@ -303,7 +377,11 @@ class SearchView(discord.ui.View):
                     self.room_state.get(prog_key, 0) + 1, prog_max
                 )
                 current = self.room_state[prog_key]
-                reward_text = action["reward_text"] + f"\n\n⛽ Generátor: **{current}/{prog_max}**"
+                # Přidej progress info jen pro generátor (ne pro lit/creature_dead)
+                if prog_key == "generator_fuel":
+                    reward_text = action["reward_text"] + f"\n\n⛽ Generátor: **{current}/{prog_max}**"
+                else:
+                    reward_text = action["reward_text"]
             else:
                 reward_text = action["reward_text"]
 
@@ -331,7 +409,13 @@ class SearchView(discord.ui.View):
                 await _escape_broadcast(interaction, self.game_id, interaction.user)
                 return
 
-            # Refreshni všechna action tlačítka podle nového stavu
+            # Refreshni action tlačítka
             self._refresh_action_buttons()
             await interaction.response.edit_message(embed=embed, view=self)
+
+            # Pokud akce rozsvítí místnost, aktualizuj hlavní room embed
+            if action.get("triggers_room_update") and self.room_view:
+                if self.room_view.message:
+                    new_embed = self.room_view._create_embed()
+                    await self.room_view.message.edit(embed=new_embed, view=self.room_view)
         return callback

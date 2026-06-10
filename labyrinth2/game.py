@@ -155,18 +155,28 @@ class RoomView(discord.ui.View):
         return self.thread or self.parent_channel
 
     def _create_embed(self) -> discord.Embed:
+        from .darkness import is_dark
         dirs = get_available_directions(self.room_name, self.map_rows, self.map_cols)
         sides = len(dirs)
         corner_note = " *(rohová)*" if sides == 2 else (" *(okrajová)*" if sides == 3 else "")
 
+        room_data = get_room_data(self.room_id)
+
+        if is_dark(self.room_id, self.room_state):
+            desc = "*Naprostá tma. Uprostřed místnosti slabě svítí podstavec s kostkami — vše ostatní pohltila tma.*"
+        elif self.room_state.get("lit") and "description_lit" in room_data:
+            desc = f"*{room_data['description_lit']}*"
+        else:
+            desc = f"*{room_data['description']}*"
+
         embed = discord.Embed(
-            title=f"🚪 [{self.room_name}] {get_room_data(self.room_id)['name']}{corner_note}",
+            title=f"🚪 [{self.room_name}] {room_data['name']}{corner_note}",
             description=(
-                f"*{get_room_data(self.room_id)['description']}*\n\n"
+                f"{desc}\n\n"
                 f"**Hráči zde ({len(self.players)}):** " +
                 ", ".join(p.display_name for p in self.players)
             ),
-            color=0x2B2D31,
+            color=0x111111 if is_dark(self.room_id, self.room_state) else 0x2B2D31,
         )
         dir_lines = []
         for d in dirs:
@@ -192,7 +202,7 @@ class RoomView(discord.ui.View):
         return embed
 
     def _build_menu(self) -> "BasicMenuView":
-        return BasicMenuView(
+        menu = BasicMenuView(
             game_id=self.game_id,
             players=self.players,
             room_name=self.room_name,
@@ -201,6 +211,8 @@ class RoomView(discord.ui.View):
             room_id=self.room_id,
             room_state=self.room_state,
         )
+        menu.room_view = self   # back-reference pro update embed po rozsvícení
+        return menu
 
     @discord.ui.button(label="🎲 Vzít kostky na podstavci", style=discord.ButtonStyle.primary,
                        custom_id="lab2_take_dice")
