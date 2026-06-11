@@ -217,7 +217,7 @@ class SearchView(discord.ui.View):
         self.member = member
         self.room_name = room_name
         self.room_id = room_id or room_name
-        self.room_state = room_state or {}
+        self.room_state = room_state if room_state is not None else {}
         self.room_view = room_view   # reference pro update embed po rozsvícení
         self.searched = False
 

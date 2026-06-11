@@ -137,6 +137,10 @@ class LabyrinthLobby(discord.ui.View):
         room_view.message = msg
         await start_thread.send(view=menu_view)
 
+        # Zaregistruj startovní místnost pro merge logiku
+        from .game import game_active_rooms
+        game_active_rooms.setdefault(game_id, {})[start_coord] = room_view
+
         # Zkontroluj podmínky pro vrahovo tlačítko Zabít (případ 2 hráčů od startu)
         await check_and_send_kill_prompt(
             start_thread, game_id,

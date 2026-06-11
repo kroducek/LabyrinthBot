@@ -126,7 +126,7 @@ class BasicMenuView(discord.ui.View):
         self.players = players
         self.room_name = room_name
         self.room_id = room_id or room_name
-        self.room_state = room_state or {}
+        self.room_state = room_state if room_state is not None else {}
         self.map_rows = map_rows
         self.map_cols = map_cols
 

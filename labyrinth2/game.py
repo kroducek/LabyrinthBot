@@ -21,6 +21,8 @@ ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 game_room_map: dict[str, dict[str, str]] = {}
 # game_id -> { room_name -> dict }      (sdílený stav místnosti, např. palivo generátoru)
 game_room_state: dict[str, dict[str, dict]] = {}
+# game_id -> { room_name -> RoomView }  (aktivní view každé místnosti pro merge hráčů)
+game_active_rooms: dict[str, dict[str, "RoomView"]] = {}
 
 
 
@@ -306,6 +308,9 @@ class RoomView(discord.ui.View):
                 embed=None, view=None,
             )
 
+            # Odregistruj tuto místnost — všichni odcházejí
+            game_active_rooms.get(self.game_id, {}).pop(self.room_name, None)
+
             # Seskup hráče podle zvoleného směru
             groups: dict[str, list[discord.Member]] = {}
             for player in self.players:
@@ -317,7 +322,26 @@ class RoomView(discord.ui.View):
             for chosen_dir, subgroup in groups.items():
                 next_room_name = neighbor_in_direction(self.room_name, chosen_dir)
 
-                # Přesuň skupinu do vlákna (přejmenuj nebo vytvoř nové)
+                # Zkontroluj jestli v cílové místnosti už někdo je → merge
+                existing_view = game_active_rooms.get(self.game_id, {}).get(next_room_name)
+                if existing_view is not None:
+                    # Přidej hráče do existujícího RoomView (in-place → BasicMenuView se sync automaticky)
+                    existing_view.players.extend(subgroup)
+                    mentions = " ".join(p.mention for p in subgroup)
+                    await existing_view.send_target.send(
+                        f"{mentions}\n"
+                        f"*Přichází skupina z {DIRECTION_LABEL[chosen_dir]}u — místnost **{next_room_name}**.*"
+                    )
+                    await existing_view.message.edit(
+                        embed=existing_view._create_embed(), view=existing_view
+                    )
+                    await check_and_send_kill_prompt(
+                        existing_view.send_target, existing_view.game_id,
+                        existing_view.players, existing_view.room_name, existing_view,
+                    )
+                    continue
+
+                # Žádná skupina tam není → vytvoř nové vlákno a RoomView
                 new_thread = await move_group_to_room(
                     parent_channel=self.parent_channel,
                     game_id=self.game_id,
@@ -345,6 +369,9 @@ class RoomView(discord.ui.View):
                 )
                 next_view.message = msg
                 await new_thread.send(view=menu_view)
+
+                # Zaregistruj novou místnost
+                game_active_rooms.setdefault(self.game_id, {})[next_room_name] = next_view
 
                 await check_and_send_kill_prompt(
                     new_thread, next_view.game_id,
